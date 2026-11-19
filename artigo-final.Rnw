@@ -1,0 +1,275 @@
+% ==========================================================
+% ARTIGO FINAL
+% Teoria do Aprendizado Estatístico — Ciência de Dados
+% Fatec Baixada Santista – Rubens Lara
+% R + knitr + abnTeX2, como a Entrega 1
+% ==========================================================
+
+\documentclass[
+  article,
+  12pt,
+  oneside,
+  a4paper,
+  english,
+  brazil
+]{abntex2}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{icomma}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[alf]{abntex2cite}
+
+\hypersetup{hidelinks}
+
+% Aviso vermelho no topo da primeira página quando o modelo não roda
+\newcommand{\aviso}[1]{\par\noindent\fcolorbox{red}{white}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+  \color{red}\small\textbf{Atenção:} #1}}\par\smallskip}
+
+% ----------------------------------------------------------
+% IDENTIFICAÇÃO
+% ----------------------------------------------------------
+\titulo{Qual será o volume total de carga movimentado no primeiro trimestre de 2027?}
+\tituloestrangeiro{What will be the total volume of cargo handled in the first quarter of 2027?}
+\autor{Predicarga}
+\local{Santos-SP}
+\data{\today}
+
+\newcommand{\nomecurso}{Tecnologia em Ciência de Dados}
+\newcommand{\nomedisciplina}{Teoria do Aprendizado Estatístico}
+\newcommand{\nomeprofessor}{Prof.\ Dr.\ João Paulo Ferreira de Mello}
+\newcommand{\repositorio}{Predicarga}
+\newcommand{\integrantes}{%
+  Diego de Farias Carazo Prieto -- RA 0051352511007 \\
+  André Franco -- RA 0051352511037 \\
+  Kaykhy Donizete Freitas de Oliveira -- RA 0051352511036 \\
+  Rafael de Sousa Rodrigues Pinto -- RA 0000000000000%
+}
+
+\makeatletter
+\hypersetup{pdftitle={\@title}, pdfauthor={\@author}, pdflang={pt-BR}}
+\makeatother
+
+\begin{document}
+
+<<setup, include=FALSE>>=
+library(knitr)
+opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, comment = "",
+               fig.align = "center", fig.width = 5, fig.height = 4.2,
+               out.width = "0.6\\linewidth")
+options(OutDec = ",", digits = 4)
+@
+
+<<modelo, include=FALSE, error=FALSE>>=
+# =========================================================================
+#  O MODELO -- troque somente este bloco
+# =========================================================================
+# 1. O banco, ja limpo pelo codigo do grupo:
+dados <- droplevels(as.data.frame(readRDS("Corpus/exportacao_cargas_1trimestre_2017_2026.rds")))
+
+# 2. A resposta Y e as colunas que NAO entram no modelo:
+if (!is.numeric(dados$ANO_MES)) {
+  dados$ANO_MES <- as.numeric(gsub("-", "", as.character(dados$ANO_MES)))
+}
+
+if (!is.numeric(dados$TOTAL_TONELADAS)) {
+  x_ton <- as.character(dados$TOTAL_TONELADAS)
+  if (any(grepl(",", x_ton, fixed = TRUE))) {
+    x_ton <- gsub("\\.", "", x_ton)
+    x_ton <- gsub(",", ".", x_ton, fixed = TRUE)
+  }
+  dados$TOTAL_TONELADAS <- as.numeric(x_ton)
+}
+
+resposta <- "TOTAL_TONELADAS"
+fora <- c(
+  "TOTAL_TEU", "NUMERO_VIAGEM", "MOVIMENTO", "ANO", "TERMINAIS",
+  "TOTAL_UNID", "MES", "CLASSENAVIO", "SENTIDO", "TIPO_INSTALACAO",
+  "BERCOS", "MERCADORIAS"
+)
+
+# 3. O modelo escolhido (Random Forest):
+ajusta <- function(d) {
+  set.seed(1)
+  if (nrow(d) > 100000) {
+    d <- d[sample(nrow(d), 100000), ]
+  }
+  randomForest::randomForest(
+    TOTAL_TONELADAS ~ .,
+    data = d,
+    mtry = 2,
+    ntree = 100,
+    maxnodes = 64
+  )
+}
+# =========================================================================
+@
+
+<<calculos, include=FALSE, error=FALSE>>=
+# ---- daqui para baixo, nada precisa ser trocado -------------------------
+tex <- function(x) {                       # texto vindo dos dados -> LaTeX
+  x <- gsub("\\\\", "\001", as.character(x))
+  x <- gsub("([&%$#_{}])", "\\\\\\1", x)
+  x <- gsub("~", "\\\\textasciitilde{}", x)
+  x <- gsub("\\^", "\\\\textasciicircum{}", x)
+  gsub("\001", "\\\\textbackslash{}", x)
+}
+
+# --- o banco do modelo -----------------------------------------------------
+if (!resposta %in% names(dados))
+  stop("A coluna '", resposta, "' nao esta no banco. Confira 'resposta' no bloco modelo.")
+fora_errada  <- setdiff(fora, names(dados))
+fora         <- intersect(fora, names(dados))
+usa_exemplo  <- identical(dados, iris)
+quantitativa <- is.numeric(dados[[resposta]]) && length(unique(na.omit(dados[[resposta]]))) > 2
+dm <- dados[, setdiff(names(dados), fora), drop = FALSE]
+dm[] <- lapply(dm, function(v) if (is.character(v) || is.logical(v)) factor(v) else v)
+if (!quantitativa) dm[[resposta]] <- factor(dm[[resposta]])
+dm <- na.omit(dm)
+
+# --- o modelo no banco inteiro ---------------------------------------------
+falha  <- NULL
+modelo <- tryCatch(ajusta(dm), error = function(e) { falha <<- conditionMessage(e); NULL })
+
+# --- o relatorio do modelo (item 4 do bloco modelo) ------------------------
+relatorio <- function(m) {
+  op <- options(OutDec = ".", width = 80)   # o relatorio sai como no console do R
+  on.exit(options(op))
+  if (is.null(m)) {
+    cat("O modelo nao rodou: veja o aviso no topo da primeira pagina.\n")
+  } else if (inherits(m, "randomForest")) {
+    print(m)
+    cat("Importancia dos preditores:\n"); print(round(randomForest::importance(m), 3))
+  } else if (inherits(m, "rpart")) {
+    print(m, digits = 3)
+  } else if (inherits(m, "cv.glmnet")) {
+    cat("lambda escolhido pela validacao cruzada:", signif(m$lambda.min, 3), "\n\n")
+    print(coef(m, s = "lambda.min"))
+  } else print(summary(m))
+}
+
+# --- os avisos do topo da primeira pagina ----------------------------------
+avisos <- paste(c(
+  if (usa_exemplo) "\\aviso{o bloco \\texttt{modelo} ainda usa o exemplo (\\texttt{iris}).}",
+  if (!is.null(falha)) paste0("\\aviso{o modelo n\\~ao rodou. Mensagem do R: \\texttt{", tex(falha), "}}"),
+  if (length(fora_errada) > 0) paste0("\\aviso{em \\texttt{fora} h\\'a colunas que n\\~ao est\\~ao no banco: ",
+                                     paste0("\\texttt{", tex(fora_errada), "}", collapse = ", "), ".}")),
+  collapse = "\n")
+@
+
+\selectlanguage{brazil}
+\frenchspacing
+
+\begin{center}
+  {\Large\bfseries \imprimirtitulo\par}
+  \vspace{0.8em}
+  {\large \imprimirautor\par}
+  \vspace{0.6em}
+  \small
+  Fatec Baixada Santista -- Rubens Lara \\
+  \nomecurso{} \quad|\quad \nomedisciplina{} \\
+  \nomeprofessor{} \\[0.4em]
+  \integrantes \\[0.4em]
+  Repositório: \texttt{\repositorio} \quad|\quad \imprimirlocal, \imprimirdata
+\end{center}
+
+\Sexpr{avisos}
+
+\begin{resumoumacoluna}
+
+\vspace{\onelineskip}
+\noindent\textbf{Palavras-chave}:
+\end{resumoumacoluna}
+
+\textual
+
+% ==========================================================================
+\section{Introdução}
+% ==========================================================================
+
+
+% ==========================================================================
+\section{Os dados}
+% ==========================================================================
+
+
+% ==========================================================================
+\section{A pergunta e o modelo}
+% ==========================================================================
+
+\subsection{A pergunta}
+
+
+\subsection{O modelo escolhido}
+
+
+% ==========================================================================
+\section{Resultados}
+% ==========================================================================
+
+<<relatorio, size='footnotesize'>>=
+relatorio(modelo)
+@
+<<avaliacao_teste, results='asis'>>=
+set.seed(1)
+idx_treino <- sample(seq_len(nrow(dm)), size = floor(0.7 * nrow(dm)))
+treino <- dm[idx_treino, ]
+teste  <- dm[-idx_treino, ]
+
+modelo_treino <- ajusta(treino)
+prev_teste    <- predict(modelo_treino, newdata = teste)
+
+rmse_teste <- sqrt(mean((teste$TOTAL_TONELADAS - prev_teste)^2))
+r2_teste   <- 1 - sum((teste$TOTAL_TONELADAS - prev_teste)^2) /
+                  sum((teste$TOTAL_TONELADAS - mean(teste$TOTAL_TONELADAS))^2)
+
+cat(sprintf(
+  "Na validação com divisão aleatória em 70\\%% treino (%s observações) e 30\\%% teste (%s observações), o modelo obteve RMSE de %s toneladas e $R^2$ de %s\\%% no conjunto de teste.\n\n",
+  formatC(nrow(treino), format = "d", big.mark = "."),
+  formatC(nrow(teste), format = "d", big.mark = "."),
+  formatC(rmse_teste, format = "f", digits = 2, big.mark = ".", decimal.mark = ","),
+  formatC(r2_teste * 100, format = "f", digits = 2, decimal.mark = ",")
+))
+@
+
+<<previsao_2027, results='asis'>>=
+max_am <- max(dm$ANO_MES, na.rm = TRUE)
+
+if (max_am > 1e7) {
+  ultimo_ano <- floor(max_am / 10000)
+  base_2027  <- subset(dm, floor(ANO_MES / 10000) == ultimo_ano)
+  base_2027$ANO_MES <- base_2027$ANO_MES + (2027 - ultimo_ano) * 10000
+} else {
+  ultimo_ano <- floor(max_am / 100)
+  base_2027  <- subset(dm, floor(ANO_MES / 100) == ultimo_ano)
+  base_2027$ANO_MES <- base_2027$ANO_MES + (2027 - ultimo_ano) * 100
+}
+
+prev_2027  <- predict(modelo, newdata = base_2027)
+total_2027 <- sum(prev_2027)
+
+cat(sprintf(
+  "Adotando o perfil operacional do primeiro trimestre de %d (%s registros) como cenário-base, o volume total projetado para o primeiro trimestre de 2027 é de %s toneladas.\n",
+  ultimo_ano,
+  formatC(nrow(base_2027), format = "d", big.mark = "."),
+  formatC(total_2027, format = "f", digits = 2, big.mark = ".", decimal.mark = ",")
+))
+@
+
+% ==========================================================================
+\section{Discussão}
+% ==========================================================================
+
+
+% ==========================================================================
+\section{Conclusão}
+% ==========================================================================
+
+
+\postextual
+\bibliography{referencias}
+
+\end{document}
